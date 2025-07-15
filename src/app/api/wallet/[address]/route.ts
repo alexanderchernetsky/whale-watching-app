@@ -28,12 +28,11 @@ export const GET = async (req: Request, context: { params: { address: string } }
 				// more options available if needed
 			},
 		});
-		console.log('data', data);
 
 		// Add here tokens which you want to fetch
 		response = {
 			usdc: {
-				...parseFungible(data.items, usdcAddress['mainnet-beta']),
+				...parseFungible(data.items, usdcAddress),
 				price: 1, // price for USDC is 1:1 to USD
 			},
 			luddi: {

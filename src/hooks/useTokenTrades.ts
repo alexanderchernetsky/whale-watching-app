@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import {getTokenConfig} from "@/helpers/getTokenConfig";
 
 const BASE_URL = 'https://api.helius.xyz/v0';
 const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY!;
@@ -14,55 +15,106 @@ type TokenTrade = {
     source: string;
 };
 
-
-// todo: check and refine
+// Fixed function
 async function fetchTokenTrades(address: string, mint: string): Promise<TokenTrade[]> {
+    const TXS_LIMIT = 100;
     const res = await fetch(
-        `${BASE_URL}/addresses/${address}/transactions?api-key=${HELIUS_API_KEY}&limit=100`
+        `${BASE_URL}/addresses/${address}/transactions?api-key=${HELIUS_API_KEY}&limit=${TXS_LIMIT}`
     );
 
     if (!res.ok) throw new Error(`Failed to fetch trades: ${res.statusText}`);
 
     const allTxs = await res.json();
+    console.log('allTxs', allTxs);
+
     const trades: TokenTrade[] = [];
 
     for (const tx of allTxs) {
         const { tokenTransfers = [], nativeTransfers = [], events, signature, timestamp, source } = tx;
 
-        const tokenTransfer = tokenTransfers.find((t: any) => t.mint === mint);
-        if (!tokenTransfer) continue;
+        // Find token transfers involving the target mint
+        const tokenTransfersForMint = tokenTransfers.filter((t: any) => t.mint === mint);
+        if (tokenTransfersForMint.length === 0) continue;
 
-        const direction = tokenTransfer.toUserAccount === address ? 'BUY' : 'SELL';
+        // Determine direction based on net token flow to/from the user
+        let netTokenAmount = 0;
+        for (const transfer of tokenTransfersForMint) {
+            if (transfer.toUserAccount === address) {
+                netTokenAmount += transfer.tokenAmount;
+            } else if (transfer.fromUserAccount === address) {
+                netTokenAmount -= transfer.tokenAmount;
+            }
+        }
 
-        // Try to determine price from USDC or SOL transfer
+        // Skip if no net change (shouldn't happen in normal trades)
+        if (netTokenAmount === 0) continue;
+
+        const direction = netTokenAmount > 0 ? 'BUY' : 'SELL';
+        const tokenAmount = Math.abs(netTokenAmount);
+
+        // Try to determine price from counter-asset transfers
         let paidAmount: number | undefined;
 
-        // Check if this transaction involved USDC
-        const usdcTransfer = tokenTransfers.find((t: any) =>
+        // Check for USDC transfers (most common counter-asset)
+        const usdcTransfers = tokenTransfers.filter((t: any) =>
             t.mint === 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
         );
 
-        if (usdcTransfer) {
-            paidAmount = usdcTransfer.tokenAmount;
-        } else if (nativeTransfers.length > 0) {
-            // Assume first native transfer is SOL payment
-            const relevantTransfer = nativeTransfers.find(
-                (t: any) => t.toUserAccount === address || t.fromUserAccount === address
+        if (usdcTransfers.length > 0) {
+            // Calculate net USDC flow (opposite direction of token flow)
+            let netUsdcAmount = 0;
+            for (const transfer of usdcTransfers) {
+                if (transfer.toUserAccount === address) {
+                    netUsdcAmount += transfer.tokenAmount;
+                } else if (transfer.fromUserAccount === address) {
+                    netUsdcAmount -= transfer.tokenAmount;
+                }
+            }
+            paidAmount = Math.abs(netUsdcAmount);
+        } else {
+            // Check for SOL transfers (wrapped SOL mint)
+            const solTransfers = tokenTransfers.filter((t: any) =>
+                t.mint === 'So11111111111111111111111111111111111111112'
             );
-            if (relevantTransfer) paidAmount = relevantTransfer.amount / 1e9; // convert lamports to SOL
+
+            if (solTransfers.length > 0) {
+                // Calculate net SOL flow from token transfers
+                let netSolAmount = 0;
+                for (const transfer of solTransfers) {
+                    if (transfer.toUserAccount === address) {
+                        netSolAmount += transfer.tokenAmount;
+                    } else if (transfer.fromUserAccount === address) {
+                        netSolAmount -= transfer.tokenAmount;
+                    }
+                }
+                paidAmount = Math.abs(netSolAmount);
+            } else if (nativeTransfers.length > 0) {
+                // Fallback to native SOL transfers
+                let netNativeAmount = 0;
+                for (const transfer of nativeTransfers) {
+                    if (transfer.toUserAccount === address) {
+                        netNativeAmount += transfer.amount;
+                    } else if (transfer.fromUserAccount === address) {
+                        netNativeAmount -= transfer.amount;
+                    }
+                }
+                paidAmount = Math.abs(netNativeAmount) / 1e9; // convert lamports to SOL
+            }
         }
 
-        const tokenAmount = tokenTransfer.tokenAmount;
-        const price = paidAmount ? paidAmount / tokenAmount : undefined;
+        // Fix: Pass the mint address to getTokenConfig, not the wallet address
+        const tokenName = getTokenConfig(mint)?.displayName;
 
-            trades.push({
+        const price = paidAmount && tokenAmount > 0 ? paidAmount / tokenAmount : undefined;
+
+        trades.push({
             signature,
             timestamp,
             direction,
-            amount: tokenAmount,
-            price,
+            amount: tokenAmount, // todo: round it
+            price, // todo: fix it, no price atm
             tokenMint: mint,
-            tokenName: undefined, // todo
+            tokenName,
             source,
         });
     }
@@ -70,13 +122,11 @@ async function fetchTokenTrades(address: string, mint: string): Promise<TokenTra
     return trades;
 }
 
-
-// todo: rename arguments
-export function useTokenTrades(address: string, mint: string) {
+export function useTokenTrades(walletAddress: string, tokenAddress: string) {
     return useQuery({
-        queryKey: ['tokenTrades', address, mint],
-        queryFn: () => fetchTokenTrades(address, mint),
-        enabled: !!address && !!mint, // only fetch when both are provided
+        queryKey: ['tokenTrades', walletAddress, tokenAddress],
+        queryFn: () => fetchTokenTrades(walletAddress, tokenAddress),
+        enabled: !!walletAddress && !!tokenAddress, // only fetch when both are provided
         staleTime: 60_000, // 1 min
     });
 }
