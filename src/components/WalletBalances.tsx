@@ -1,49 +1,39 @@
+import getFormattedBalance from "@/helpers/getFormattedBalance";
 import useWalletData from "@/hooks/useWalletData";
-import {solanaWalletAddress, TokenConfig, tokenConfig} from "@/solana/constants";
+import {solanaWalletAddress} from "@/solana/constants";
 import {Spinner} from '@radix-ui/themes';
+import formatZeros from "@/helpers/formatZeros";
+import Image from 'next/image';
 
-// Type definitions
-interface TokenAccount {
+type TokenData = {
     address: string;
+    accounts: {
+        address: string;
+        balance: number;
+    }[];
     balance: number;
-}
-
-interface TokenData {
-    address: string;
-    accounts: TokenAccount[];
-    balance: number;
-    price: number;
-}
+    decimals: number;
+    pricePerToken: number;
+    totalPriceUSD: number;
+    name: string;
+    symbol: string;
+    image: string | null;
+};
 
 interface WalletData {
     [tokenKey: string]: TokenData;
 }
 
+// todo: add input to FE to paste the target wallet address
+const targetAddress = solanaWalletAddress;
+
 export default function WalletBalances() {
-    const targetAddress = solanaWalletAddress;
     const { data, isLoading } = useWalletData(targetAddress);
 
-    // Function to get formatted balance
-    const getFormattedBalance = (tokenKey: string, balance: number): number => {
-        const config: TokenConfig = tokenConfig[tokenKey] || { decimals: 1e6, displayName: tokenKey.toUpperCase() };
-        return balance / config.decimals;
-    };
-
-    // Function to get display name
-    const getDisplayName = (tokenKey: string): string => {
-        return tokenConfig[tokenKey]?.displayName || tokenKey.toUpperCase();
-    };
-
-    // Function to get appropriate decimal places for display
-    const getDecimalPlaces = (tokenKey: string, balance: number): number => {
-        if (tokenKey === 'sol') return 4;
-        if (tokenKey === 'usdc') return 2;
-        // For other tokens, show more decimals if balance is very small
-        return balance < 1 ? 6 : 2;
-    };
-
     // Filter out tokens with zero balance
-    const tokens: [string, TokenData][] = data ? Object.entries(data as WalletData).filter(([_key, token]) => token.balance > 0) : [];
+    const tokens = data ? Object.entries(data as WalletData).filter(([_key, token]) => token.balance > 0) : [];
+
+    console.log('tokens', tokens);
 
     return (
         <div className="max-w-[1400px] mx-auto p-6">
@@ -55,21 +45,37 @@ export default function WalletBalances() {
                     <Spinner size="3" />
                 </div>
             ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {tokens.map(([tokenKey, tokenData]: [string, TokenData]) => {
-                        const balance: number = getFormattedBalance(tokenKey, tokenData.balance);
-                        const price: number = tokenData.price ?? 0;
-                        const displayName: string = getDisplayName(tokenKey);
-                        const decimalPlaces: number = getDecimalPlaces(tokenKey, balance);
+                <div className="grid grid-cols-1 gap-4">
+                    {tokens.map(([tokenKey, tokenData]) => {
+                        const formattedBalance = getFormattedBalance(tokenData.balance, tokenData.decimals!);
+                        const pricePerToken = tokenData.pricePerToken;
+                        const displayName = tokenData.name;
+                        const ticker = tokenData.symbol;
+                        const totalPriceUSD = tokenData.totalPriceUSD;
 
                         return (
-                            <div key={tokenKey} className="bg-gray-100 p-4 rounded-lg">
-                                <h2 className="text-lg font-semibold mb-2">{displayName}</h2>
-                                <p>Balance: {balance.toFixed(decimalPlaces)} {displayName}</p>
-                                <p>Price: ${price.toFixed(6)}</p>
-                                <p className="mt-1 text-sm text-gray-500">
-                                    ≈ ${(balance * price).toFixed(2)}
-                                </p>
+                            <div key={tokenKey} className="flex flex-row gap-5 bg-gray-100 p-4 rounded-lg">
+                                <div className="flex items-center justify-center w-[60px]">
+                                    {tokenData.image && (
+                                        <Image src={tokenData.image} alt={tokenData.symbol} width={50} height={50} />
+                                    )}
+                                </div>
+                                <div className="flex flex-col">
+                                    <h2 className="flex flex-row justify-start items-center gap-2 text-lg font-semibold mb-2">
+                                    <span>
+                                        {displayName}
+                                    </span>
+                                        <span>
+                                        ${ticker}
+                                    </span>
+                                    </h2>
+                                    <p>Balance: {formattedBalance}</p>
+                                    <p>Price per token: ${formatZeros(pricePerToken)}</p>
+                                    <p>
+                                        Total value ≈ ${(Number(totalPriceUSD)).toFixed(2)}
+                                    </p>
+                                </div>
+
                             </div>
                         );
                     })}

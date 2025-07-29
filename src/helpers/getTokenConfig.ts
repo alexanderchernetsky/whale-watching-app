@@ -1,4 +1,4 @@
-import {tokenConfig, TokenConfig, TokenConfigMap} from "@/solana/constants";
+import {tokenConfig, TokenConfig} from "@/solana/constants";
 
 // Create a case-insensitive lookup map
 const caseInsensitiveTokenMap = new Map<string, TokenConfig>();
@@ -14,5 +14,7 @@ Object.values(tokenConfig).forEach(config => {
  * @returns The token configuration object or undefined if not found
  */
 export function getTokenConfig(address: string): TokenConfig | undefined {
-    return caseInsensitiveTokenMap.get(address.toLowerCase());
+    const foundConfig = caseInsensitiveTokenMap.get(address.toLowerCase());
+    console.log('found config for address', foundConfig);
+    return foundConfig;
 }

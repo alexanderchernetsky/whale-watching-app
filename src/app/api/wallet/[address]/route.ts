@@ -1,18 +1,12 @@
 import helius from '@/solana/helius';
-import {
-	bonkPotAddress, fartCoinAddress,
-	luddiAddress, pepeDaddyAddress, pumpAddress,
-	pumpMoneyGlitchAddress,
-	usdcAddress,
-	yieldCoinAddress,
-	snp500Address
-} from '@/solana/constants';
-import { parseFungible } from '@/solana/parseFungible';
+import { type Fungible } from '@/solana/parseFungible';
+import {parseFungible} from "@/solana/parseFungible";
 import { NextResponse } from 'next/server';
 
 // fetches token balances and prices for specific wallet address
 export const GET = async (req: Request, context: { params: { address: string } }) => {
 	let response;
+	let raw;
 
 	try {
 		const { address } = await context.params;
@@ -29,41 +23,52 @@ export const GET = async (req: Request, context: { params: { address: string } }
 			},
 		});
 
-		// Add here tokens which you want to fetch
+		raw = data;
+
+		// Filter for fungible tokens and create a map of all tokens
+		const fungibleTokens: Record<string, Fungible> = {};
+
+		// Get all unique fungible token addresses from the data
+		const fungibleItems = data.items.filter(item =>
+			item.interface === 'FungibleToken' ||
+			item.token_info // items with token_info are fungible tokens
+		);
+
+		// Parse each fungible token
+		for (const item of fungibleItems) {
+			const tokenAddress = item.id;
+			const parsedToken = parseFungible(data.items, tokenAddress);
+
+			// Skip tokens with zero balance
+			if (parsedToken.balance === 0) continue;
+
+			// Create a key from the symbol or address for easier identification
+			const tokenKey = parsedToken.symbol?.toLowerCase().replace('$', '') || tokenAddress.slice(0, 8);
+
+			fungibleTokens[tokenKey] = parsedToken;
+		}
+
+		// Filter out tokens without decimals and price per token
+		const filteredTokens: Record<string, Fungible> = {};
+
+		for (const [key, token] of Object.entries(fungibleTokens)) {
+			// Keep tokens that have both decimals and pricePerToken
+			if (token.decimals !== undefined && token.decimals !== null &&
+				token.pricePerToken !== undefined && token.pricePerToken !== null && token.pricePerToken > 0) {
+				filteredTokens[key] = token;
+			}
+		}
+
 		response = {
-			usdc: {
-				...parseFungible(data.items, usdcAddress),
-				price: 1, // price for USDC is 1:1 to USD
-			},
-			luddi: {
-				...parseFungible(data.items, luddiAddress),
-			},
-			yield: {
-				...parseFungible(data.items, yieldCoinAddress),
-			},
-			bonkPot: {
-				...parseFungible(data.items, bonkPotAddress),
-			},
-			pmg: {
-				...parseFungible(data.items, pumpMoneyGlitchAddress)
-			},
-			fartcoin: {
-				...parseFungible(data.items, fartCoinAddress),
-			},
-			pepeDaddy: {
-				...parseFungible(data.items, pepeDaddyAddress),
-			},
-			pump: {
-				...parseFungible(data.items, pumpAddress),
-			},
-			snp500: {
-				...parseFungible(data.items, snp500Address),
-			},
+			...filteredTokens,
 			sol: {
-				address,
-				accounts: [],
-				balance: data.nativeBalance?.lamports ?? 0,
-				price: data.nativeBalance?.price_per_sol ?? 0,
+				name: 'Solana',
+				symbol: 'SOL',
+				decimals: 9,
+				balance: data.nativeBalance?.lamports,
+				pricePerToken: data.nativeBalance?.price_per_sol,
+				totalPriceUSD: data.nativeBalance?.total_price,
+				// todo: add Solana image
 			},
 		};
 	} catch (error) {
@@ -71,5 +76,5 @@ export const GET = async (req: Request, context: { params: { address: string } }
 		throw error;
 	}
 
-	return NextResponse.json(response);
+	return NextResponse.json({...response, raw });
 };
